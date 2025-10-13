@@ -1,0 +1,30 @@
+#define LED 6
+float temp;
+int tempPin = 0;
+
+void setup() {
+   Serial.begin(9600);
+
+   // put your setup code here, to run once:
+  pinMode(LED,OUTPUT);    //Sets the pinMode to Output 
+}
+
+void loop() {
+   temp = analogRead(tempPin);
+   // read analog volt from sensor and save to variable temp
+   temp = temp * 0.48828125;
+   // convert the analog volt to its temperature equivalent
+   Serial.print("TEMPERATURE = ");
+   Serial.print(temp); // display temperature value
+   Serial.print("*C");
+   Serial.println();
+   delay(1000); // update sensor reading each one second
+
+  // put your main code here, to run repeatedly:
+  digitalWrite(LED, HIGH); //Sets the voltage to high 
+  delay(1000);					   //Waits for 1000 milliseconds 
+  digitalWrite(LED, LOW);  //Sets the voltage to low
+  delay(1000);             //Waits for 1000 milliseconds 
+
+
+}
