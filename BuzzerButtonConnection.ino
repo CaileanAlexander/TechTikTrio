@@ -3,7 +3,6 @@
 const int buzzerPin = A0; // Buzzer is connected to A0
 const int buttonPin = 3; // Button is connected to D3
 const int lightsensorPin = 4; // Light sensor pin is connected to D4
-const int temperaturePin = 5; // Temperature pin is connected to D5
 
 const int lightThreshold = 300; // Lower than this and the plants do not have enough light to grow in their current position
 // The buzzer will sound when the light threshold detected by the sensor is below this in order to alert the farmer to change the position of the plant.
