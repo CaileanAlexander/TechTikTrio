@@ -92,7 +92,7 @@ void loop() {
   int buttonState = digitalRead(buttonPin);
 
   if (buttonState == LOW && lastButtonState == HIGH) {
-    buzzerActive = !buzzerActive;  // Toggle buzzer state
+    buzzerActive = !buzzerActive;  // Toggle buzzer state between on and off when a particular action happens, e.g. a press of the button.
     Serial.println("Button pressed! Toggling buzzer.");
   }
   lastButtonState = buttonState;
