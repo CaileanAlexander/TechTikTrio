@@ -3,7 +3,7 @@
 
 rgb_lcd lcd;
 
-const int buzzerPin = 8;   // Grove Buzzer on port D4
+const int buzzerPin = 8;   // Grove Buzzer on port D8 (changed Thursday 16th October)
 const int buttonPin = 3;   // Grove Button on port D3
 
 bool buzzerActive=false;      // Buzzer off initially
