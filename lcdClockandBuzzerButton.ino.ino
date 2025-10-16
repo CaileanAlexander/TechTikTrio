@@ -22,9 +22,10 @@ void setup() {
   pinMode(buzzerPin, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);
 
-  lcd.begin(16, 2);
-  lcd.setRGB(0, 100, 255); // Blue backlight
-  lcd.print("Simple Clock");
+  // initialize the lcd screeen
+  lcd.begin(16, 2); 
+  lcd.setRGB(0, 100, 255); // Blue backlight for the lcd screen
+  lcd.print("TechTikTrio Smart Clock"); //Initialisation message our Group name on startup
   delay(2000);
   lcd.clear();
 
