@@ -1,7 +1,7 @@
-#include <Wire.h>
-#include "rgb_lcd.h"
+#include <Wire.h> // Allows communication with the on board library of the Arduino for communication between the LCD screen and the Arduino
+#include "rgb_lcd.h" // Library to communicate and display information on the LCD
 
-rgb_lcd lcd;
+rgb_lcd lcd; // this allows you to control the lcd screen through code, it identifies the lcd screen
 
 unsigned long previousMillis = 0;
 int seconds = 0;
