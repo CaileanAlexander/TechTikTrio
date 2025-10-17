@@ -85,9 +85,14 @@ void loop() {
     if (seconds < 10) lcd.print('0');
     lcd.print(seconds);
 
-    lcd.setCursor(0, 1);
-    lcd.print("Running...     "); // Clear rest of line
-  }
+    // Adding a Warning Message on LCD when buzzer goes off
+    lcd.setCursor(O,1);
+    if (buzzerActive) {
+      lcd.print(!WARNING ALARM!!);  // Warning alarm will display when the buzzer sounds
+    } else {
+      lcd.print(Running...     "); // This will clear the previous text
+    }
+   }
 
   // Handle button press to toggle buzzer ON/OFF manually
   int buttonState = digitalRead(buttonPin);
