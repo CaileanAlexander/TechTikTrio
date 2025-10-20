@@ -156,5 +156,5 @@ void loop() {
   Serial.print(" | BuzzerActive: ");
   Serial.println(buzzerActive);
 
-  delay(10);
+  delay(500);
 }
