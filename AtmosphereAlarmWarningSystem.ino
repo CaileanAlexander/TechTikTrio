@@ -1,6 +1,6 @@
 /*
   Combined Smart Clock + Sensors + ThingSpeak POST
-  - Temp sensor (LM35): A0
+  - Temp sensor (Grove NTC thermistor): A0
   - Light sensor: A1
   - Buzzer: D8
   - Button: D3 (debounced)
@@ -19,15 +19,14 @@
 // ---------- ThingSpeak / Wi-Fi config ----------
 const char THINGSPEAK_SERVER[] = "api.thingspeak.com";
 const int THINGSPEAK_PORT = 80;
-// Replace with your channel Write API Key
-const String WRITE_API_KEY = "YTET0VR0IH9MB2U3";
+const String WRITE_API_KEY = "";  // <-- PUT KEY HERE
 
 WiFiClient wifiClient;
 HttpClient httpClient(wifiClient, THINGSPEAK_SERVER, THINGSPEAK_PORT);
 
 // ---------- Pins ----------
 #define LED_PIN 6
-#define TEMP_PIN A0     // LM35 temperature sensor
+#define TEMP_PIN A0     // Grove Temp Sensor (NTC thermistor)
 #define LIGHT_PIN A1    // Grove light sensor
 #define SENSOR_PIN 4    // External digital sensor trigger (D4)
 const int BUZZER_PIN = 8;
@@ -43,26 +42,25 @@ bool alarmTriggered = false;
 int lastButtonState = LOW;
 int buttonState = LOW;
 unsigned long lastDebounceTime = 0;
-const unsigned long debounceDelay = 50; // ms
+const unsigned long debounceDelay = 50;
 
 // clock timing
-unsigned long previousMillis = 0;         // increments each second
-unsigned long lcdUpdateMillis = 0;        // for top-row time updates (1s)
-unsigned long thingspeakMillis = 0;       // ThingSpeak upload interval
-unsigned long printUpdateMillis = 0;      // Serial print interval
-unsigned long displayCycleMillis = 0;     // bottom-row cycle timer
+unsigned long previousMillis = 0;
+unsigned long lcdUpdateMillis = 0;
+unsigned long thingspeakMillis = 0;
+unsigned long printUpdateMillis = 0;
+unsigned long displayCycleMillis = 0;
 
 const unsigned long secondInterval = 1000UL;
 const unsigned long lcdInterval = 1000UL;
-const unsigned long thingspeakInterval = 20000UL; // 20 seconds
-const unsigned long printInterval = 5000UL;       // 5 seconds
-const unsigned long displayCycleInterval = 3000UL; // 3 seconds for cycling messages
+const unsigned long thingspeakInterval = 20000UL;
+const unsigned long printInterval = 5000UL;
+const unsigned long displayCycleInterval = 3000UL;
 
 int seconds = 0;
 int minutes = 0;
 int hours = 0;
 
-// elapsed since last reset
 int elapsedSeconds = 0;
 int elapsedMinutes = 0;
 int elapsedHours = 0;
@@ -86,20 +84,27 @@ void connectWiFi() {
   Serial.println(WiFi.localIP());
 }
 
-// ---------- Sensor helper functions ----------
-float readLm35C(int pin) {
-  int raw = analogRead(pin);
-  // LM35: 10 mV/°C ; ADC step ~4.887585 mV -> °C = raw * 0.48828125
-  return raw * 0.48828125f;
+// ---------- Temperature for GROVE NTC THERMISTOR ----------
+float readGroveTempC(int pin) {
+  const int BETA = 4275;       // beta coefficient
+  const float R0 = 100000.0;   // 100kΩ at 25°C
+
+  int a = analogRead(pin);
+  if (a <= 0) return -100;
+
+  float resistance = 1023.0 / a - 1.0;
+  resistance = R0 * resistance;
+
+  float temperatureKelvin = 1.0 / (log(resistance / R0) / BETA + 1.0 / 298.15);
+  return temperatureKelvin - 273.15;
 }
 
+// ---------- Light ----------
 float readGroveLightLux(int pin) {
   int sensorValue = analogRead(pin);
   if (sensorValue <= 0) return 0;
-  // Convert ADC reading to resistance with 10k reference resistor (approx)
-  float resistance = (1023.0 - sensorValue) * 10.0 / sensorValue; // in kΩ
-  float lux = 10000.0 / pow(resistance, 4.0 / 3.0); // empirical approx
-  return lux;
+  float resistance = (1023.0 - sensorValue) * 10.0 / sensorValue;
+  return 10000.0 / pow(resistance, 4.0 / 3.0);
 }
 
 // ---------- ThingSpeak POST ----------
@@ -109,6 +114,7 @@ void postToThingSpeak(float lux, float temperature, bool alarm, int sensorState)
                 "&field2=" + String(temperature, 1) +
                 "&field3=" + String(alarm ? 1 : 0) +
                 "&field4=" + String(sensorState);
+
   Serial.println("\nPosting to ThingSpeak:");
   Serial.println(body);
 
@@ -157,8 +163,8 @@ void setup() {
   Serial.println("Combined Smart Clock + ThingSpeak (Light + Temp)");
 
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT);    // assumes external pull-down; change to INPUT_PULLUP if using internal pull-up
-  pinMode(SENSOR_PIN, INPUT);    // digital sensor trigger
+  pinMode(BUTTON_PIN, INPUT);
+  pinMode(SENSOR_PIN, INPUT);
   pinMode(LED_PIN, OUTPUT);
 
   lcd.begin(16, 2);
@@ -175,7 +181,6 @@ void setup() {
 
   connectWiFi();
 
-  // initialize timers
   previousMillis = millis();
   lcdUpdateMillis = previousMillis;
   thingspeakMillis = previousMillis;
@@ -186,7 +191,7 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  // --- clock update every 1s ---
+  // --- clock update ---
   if (currentMillis - previousMillis >= secondInterval) {
     previousMillis += secondInterval;
     seconds++;
@@ -200,12 +205,12 @@ void loop() {
     if (elapsedMinutes >= 60) { elapsedMinutes = 0; elapsedHours++; }
   }
 
-  // --- read sensors (fast, non-blocking) ---
-  tempC = readLm35C(TEMP_PIN);
+  // --- read sensors ---
+  tempC = readGroveTempC(TEMP_PIN);
   lightLux = readGroveLightLux(LIGHT_PIN);
   int digitalSensorState = digitalRead(SENSOR_PIN);
 
-  // --- sensor-triggered alarm (external digital sensor) ---
+  // --- sensor-triggered alarm ---
   if (digitalSensorState == HIGH && !buzzerActive) {
     buzzerActive = true;
     alarmTriggered = true;
@@ -213,7 +218,7 @@ void loop() {
     resetClocks();
   }
 
-  // --- button debounce & handling ---
+  // --- button debounce ---
   int reading = digitalRead(BUTTON_PIN);
   if (reading != lastButtonState) {
     lastDebounceTime = currentMillis;
@@ -221,7 +226,6 @@ void loop() {
   if ((currentMillis - lastDebounceTime) > debounceDelay) {
     if (reading != buttonState) {
       buttonState = reading;
-      // assuming button reads HIGH when pressed (external pull-down)
       if (buttonState == HIGH) {
         buzzerActive = !buzzerActive;
         if (buzzerActive) {
@@ -236,27 +240,22 @@ void loop() {
   }
   lastButtonState = reading;
 
-  // --- LCD top row updates every second (time) and bottom row cycles every 3s when no alarm ---
+  // --- LCD top row time ---
   if (currentMillis - lcdUpdateMillis >= lcdInterval) {
     lcdUpdateMillis += lcdInterval;
 
-    // Top row: time
     lcd.setCursor(0, 0);
     lcd.print("Time:");
     lcd.setCursor(6, 0);
-    if (hours < 10) lcd.print('0');
-    lcd.print(hours);
+    if (hours < 10) lcd.print('0'); lcd.print(hours);
     lcd.print(':');
-    if (minutes < 10) lcd.print('0');
-    lcd.print(minutes);
+    if (minutes < 10) lcd.print('0'); lcd.print(minutes);
     lcd.print(':');
-    if (seconds < 10) lcd.print('0');
-    lcd.print(seconds);
+    if (seconds < 10) lcd.print('0'); lcd.print(seconds);
   }
 
-  // bottom row: choose behavior (alarm overrides)
+  // --- LCD bottom row ---
   if (buzzerActive) {
-    // blink warning every 500ms
     lcd.setCursor(0, 1);
     if ((currentMillis / 500) % 2 == 0) {
       lcd.print("    WARNING!     ");
@@ -266,10 +265,9 @@ void loop() {
       lcd.setRGB(100, 0, 0);
     }
   } else {
-    // cycle bottom row every displayCycleInterval
     if (currentMillis - displayCycleMillis >= displayCycleInterval) {
       displayCycleMillis += displayCycleInterval;
-      displayState = (displayState + 1) % 3; // 0,1,2
+      displayState = (displayState + 1) % 3;
     }
 
     lcd.setCursor(0, 1);
@@ -277,37 +275,34 @@ void loop() {
       lcd.print("Running...       ");
       lcd.setRGB(0, 100, 255);
     } else if (displayState == 1) {
-      // show temperature
       char buf[17];
-      // format like "Temp: 23.4 C   "
       snprintf(buf, sizeof(buf), "Temp:%5.1f C      ", tempC);
       lcd.print(buf);
       lcd.setRGB(0, 150, 200);
     } else {
-      // show light
       char buf[17];
-      // format like "Light: 123 lx    "
       snprintf(buf, sizeof(buf), "Light:%6.0f lx    ", lightLux);
       lcd.print(buf);
       lcd.setRGB(120, 100, 0);
     }
   }
 
-  // --- buzzer and LED control ---
+  // --- buzzer + LED ---
   if (buzzerActive) tone(BUZZER_PIN, 1000);
   else noTone(BUZZER_PIN);
 
   digitalWrite(LED_PIN, buzzerActive ? HIGH : LOW);
 
-  // --- ThingSpeak upload every thingspeakInterval ---
+  // --- ThingSpeak upload ---
   if (currentMillis - thingspeakMillis >= thingspeakInterval) {
     thingspeakMillis += thingspeakInterval;
     postToThingSpeak(lightLux, tempC, buzzerActive, digitalRead(SENSOR_PIN));
   }
 
-  // --- Serial debug every printInterval ---
+  // --- Serial debug ---
   if (currentMillis - printUpdateMillis >= printInterval) {
     printUpdateMillis += printInterval;
+
     Serial.print("Clock: ");
     printTimeSerial(hours, minutes, seconds);
     Serial.print(" | Elapsed: ");
@@ -322,7 +317,5 @@ void loop() {
     Serial.print(tempC, 1);
     Serial.println(" C");
   }
-
-  // loop remains non-blocking
 }
 
