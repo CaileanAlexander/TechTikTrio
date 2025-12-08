@@ -36,6 +36,8 @@ HttpClient sunClient(wifiClient, "api.sunrise-sunset.org", 80);
 #define SENSOR_PIN 4    // External digital sensor trigger (D4)
 const int BUZZER_PIN = 8;
 const int BUTTON_PIN = 3;
+const int touchsensorPin = D7;
+const int touchLED = A3;
 
 // ---------- LCD ----------
 rgb_lcd lcd;
@@ -49,12 +51,20 @@ int buttonState = LOW;
 unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 50;
 
+// ---------- Touch sensor state ----------
+int lasttouchsensorState = LOW; // Previous reading
+int currenttouchsensorState;    // Tracks current state
+unsigned long touchStartTime = 0;    // When sensor was touched
+bool touchTimerRunning = false;      // Track if timer is active
+unsigned long lastTouchPrintMillis = 0; // Track last print for elapsed
+
 // clock timing
 unsigned long previousMillis = 0;
 unsigned long lcdUpdateMillis = 0;
 unsigned long thingspeakMillis = 0;
 unsigned long printUpdateMillis = 0;
 unsigned long displayCycleMillis = 0;
+unsigned long googleSheetsMillis = 0;  // NEW: separate timer for Google Sheets
 
 unsigned long sunMillis = 0;
 const unsigned long sunInterval = 30000UL; // 30 seconds
@@ -76,6 +86,10 @@ int elapsedHours = 0;
 // sensor values
 float tempC = 0.0;
 float lightLux = 0.0;
+
+// sunrise/sunset numeric values for ThingSpeak
+float sunriseFloat = 0.0;
+float sunsetFloat  = 0.0;
 
 // display cycle state: 0=Running,1=Temp,2=Light
 int displayState = 0;
@@ -179,6 +193,9 @@ void getSunData() {
   sunriseFormatted = formatTime(sunrise);
   sunsetFormatted  = formatTime(sunset);
 
+  sunriseFloat = timeToFloat(sunrise);
+  sunsetFloat  = timeToFloat(sunset);
+
   Serial.print("Sunrise: ");
   Serial.println(sunriseFormatted);
   Serial.print("Sunset: ");
@@ -207,16 +224,30 @@ String urlEncode(String s) {
   return s;
 }
 
+// Convert ISO time to HH.MM float in order to display time as (8.27) for example
+float timeToFloat(String isoTime) {
+  int tIndex = isoTime.indexOf('T');
+  if (tIndex == -1) return 0.0;
+
+  String timePart = isoTime.substring(tIndex + 1, tIndex + 6); // "08:27"
+  int hour = timePart.substring(0, 2).toInt();
+  int minute = timePart.substring(3, 5).toInt();
+
+  // Convert to HH.MM format
+  return hour + (minute / 100.0);
+}
+
+
 // ---------- ThingSpeak POST ----------
-void postToThingSpeak(float lux, float temperature, bool alarm, int sensorState) {
+void postToThingSpeak(float lux, float temperature, bool alarm, int sensorState, unsigned long touchSeconds) {
   String body = "api_key=" + WRITE_API_KEY +
                 "&field1=" + String(lux, 1) +
                 "&field2=" + String(temperature, 1) +
                 "&field3=" + String(alarm ? 1 : 0) +
                 "&field4=" + String(sensorState) +
-                "&field5=" + urlEncode(sunriseFormatted) +
-                "&field6=" + urlEncode(sunsetFormatted);
-
+                "&field5=" + String(sunriseFloat, 2) +   // numeric HH.MM
+                "&field6=" + String(sunsetFloat, 2) +     // numeric HH.MM
+                "&field7=" + String(touchSeconds);  // NEW field for touch seconds
 
   Serial.println("\nPosting to ThingSpeak:");
   Serial.println(body);
@@ -269,6 +300,10 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT);
   pinMode(SENSOR_PIN, INPUT);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(touchsensorPin, INPUT);
+  pinMode(touchLED, OUTPUT);
+  digitalWrite(touchLED, LOW);
+
 
   lcd.begin(16, 2);
   lcd.setRGB(0, 100, 255);
@@ -289,6 +324,7 @@ void setup() {
   thingspeakMillis = previousMillis;
   printUpdateMillis = previousMillis;
   displayCycleMillis = previousMillis;
+  googleSheetsMillis = previousMillis;  // NEW
 }
 
 void loop() {
@@ -321,6 +357,14 @@ void loop() {
     resetClocks();
   }
 
+    // --- NEW temperature threshold check ---
+  if (tempC > 27 && !buzzerActive) {
+      buzzerActive = true;
+      alarmTriggered = true;
+      Serial.println("Temperature exceeded 27°C - buzzer ON, resetting clocks.");
+      resetClocks();
+  }
+
   // --- button debounce ---
   int reading = digitalRead(BUTTON_PIN);
   if (reading != lastButtonState) {
@@ -343,6 +387,46 @@ void loop() {
   }
   lastButtonState = reading;
 
+
+  if (currentMillis - googleSheetsMillis >= printInterval) {
+    googleSheetsMillis += printInterval;
+    postToGoogleSheets(lightLux, tempC, alarmTriggered, elapsedSeconds);
+  }
+
+  // --- Touch sensor timer / LED handling (non-blocking) ---
+  currenttouchsensorState = digitalRead(touchsensorPin);
+
+  if(lasttouchsensorState == LOW && currenttouchsensorState == HIGH){
+    if(!touchTimerRunning){
+      // First tap: start timer, turn LED on
+      Serial.println("Touch sensor activated- someone has entered.");
+      touchStartTime = currentMillis;
+      touchTimerRunning = true;
+      digitalWrite(touchLED, HIGH);
+    } else {
+      // Second tap: stop timer, turn LED off
+      Serial.println("Touch sensor activated - door closed.");
+      unsigned long totalTime = currentMillis - touchStartTime;
+      Serial.print("Door was open for: ");
+      Serial.print(totalTime / 1000);
+      Serial.println(" seconds.");
+      touchTimerRunning = false;
+      touchStartTime = 0;
+      digitalWrite(touchLED, LOW);
+    }
+  }
+
+  if(touchTimerRunning && currentMillis - lastTouchPrintMillis >= 1000){
+    lastTouchPrintMillis = currentMillis;
+    unsigned long elapsed = currentMillis - touchStartTime;
+    Serial.print("Seconds since someone has entered: ");
+    Serial.println(elapsed / 1000);
+  }
+
+  lasttouchsensorState = currenttouchsensorState;
+
+
+
   // --- LCD top row time ---
   if (currentMillis - lcdUpdateMillis >= lcdInterval) {
     lcdUpdateMillis += lcdInterval;
@@ -357,38 +441,58 @@ void loop() {
     if (seconds < 10) lcd.print('0'); lcd.print(seconds);
   }
 
-  // --- LCD bottom row ---
-  if (buzzerActive) {
+// --- LCD bottom row ---
+if (buzzerActive) {
     lcd.setCursor(0, 1);
-    if ((currentMillis / 500) % 2 == 0) {
-      lcd.print("    WARNING!     ");
-      lcd.setRGB(255, 0, 0);
+    if ((millis() / 500) % 2 == 0) {
+        lcd.print("    WARNING!     ");
+        lcd.setRGB(255, 0, 0);
     } else {
-      lcd.print("                 ");
-      lcd.setRGB(100, 0, 0);
+        lcd.print("                 ");
+        lcd.setRGB(100, 0, 0);
     }
-  } else {
-    if (currentMillis - displayCycleMillis >= displayCycleInterval) {
-      displayCycleMillis += displayCycleInterval;
-      displayState = (displayState + 1) % 3;
+} else {
+    if (millis() - displayCycleMillis >= displayCycleInterval) {
+        displayCycleMillis += displayCycleInterval;
+        displayState = (displayState + 1) % 3;
     }
 
     lcd.setCursor(0, 1);
+
     if (displayState == 0) {
-      lcd.print("Running...       ");
-      lcd.setRGB(0, 100, 255);
+        lcd.print("Running...       ");
+        lcd.setRGB(0, 100, 255);
     } else if (displayState == 1) {
-      char buf[17];
-      snprintf(buf, sizeof(buf), "Temp:%5.1f C      ", tempC);
-      lcd.print(buf);
-      lcd.setRGB(0, 150, 200);
-    } else {
-      char buf[17];
-      snprintf(buf, sizeof(buf), "Light:%6.0f lx    ", lightLux);
-      lcd.print(buf);
-      lcd.setRGB(120, 100, 0);
+        char buf[17];
+        snprintf(buf, sizeof(buf), "Temp:%5.1f C      ", tempC);
+        lcd.print(buf);
+        lcd.setRGB(0, 150, 200);
+
+        // touch timer display (right-aligned)
+        if(touchTimerRunning){
+            char touchBuf[10];
+            unsigned long elapsed = (millis() - touchStartTime) / 1000;
+            snprintf(touchBuf, sizeof(touchBuf), "T:%2lus", elapsed);
+            lcd.setCursor(16 - strlen(touchBuf), 1);
+            lcd.print(touchBuf);
+        }
+
+    } else { // displayState == 2
+        char buf[17];
+        snprintf(buf, sizeof(buf), "Light:%6.0f lx    ", lightLux);
+        lcd.print(buf);
+        lcd.setRGB(120, 100, 0);
+
+        // touch timer display (right-aligned)
+        if(touchTimerRunning){
+            char touchBuf[10];
+            unsigned long elapsed = (millis() - touchStartTime) / 1000;
+            snprintf(touchBuf, sizeof(touchBuf), "T:%2lus", elapsed);
+            lcd.setCursor(16 - strlen(touchBuf), 1);
+            lcd.print(touchBuf);
+        }
     }
-  }
+}
 
   // --- buzzer + LED ---
   if (buzzerActive) tone(BUZZER_PIN, 1000);
@@ -401,11 +505,18 @@ void loop() {
   getSunData(); // unchanged logic
   }
 
-  // --- ThingSpeak upload ---
-  if (currentMillis - thingspeakMillis >= thingspeakInterval) {
+
+// --- ThingSpeak upload ---
+if (currentMillis - thingspeakMillis >= thingspeakInterval) {
     thingspeakMillis += thingspeakInterval;
-    postToThingSpeak(lightLux, tempC, buzzerActive, digitalRead(SENSOR_PIN));
-  }
+
+    // Calculate seconds since touch sensor was activated
+    unsigned long touchSeconds = touchTimerRunning ? (millis() - touchStartTime) / 1000 : 0;
+
+    // Post to ThingSpeak including touchSeconds
+    postToThingSpeak(lightLux, tempC, buzzerActive, digitalRead(SENSOR_PIN), touchSeconds);
+}
+
 
   // --- Serial debug ---
   if (currentMillis - printUpdateMillis >= printInterval) {
